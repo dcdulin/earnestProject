@@ -1,4 +1,8 @@
 """
+####################################################################################
+TODO NEXT: not inserting core URL when sending google query from cache
+####################################################################################
+
 A simple proxy server. Usage:
 
 http://hostname:port/p/(URL to be proxied, minus protocol)
@@ -6,6 +10,8 @@ http://hostname:port/p/(URL to be proxied, minus protocol)
 For example:
 
 http://127.0.0.1:5000/p/www.google.com
+
+start memcached: memcached -d -m 30 -l 127.0.0.1 -p 11211
 
 """
 #The request and response objects wrap the WSGI environment
@@ -19,15 +25,13 @@ app = Flask(__name__.split('.')[0])
 logging.basicConfig(level=logging.INFO)
 APPROVED_HOSTS = set(["google.com", "www.google.com", "yahoo.com"])
 CHUNK_SIZE = 1024
-LOG = logging.getLogger("main.py")
+LOG = logging.getLogger("proxy.py")
 CACHE_TIMEOUT = 5
-
 mc = memcache.Client([('127.0.0.1', 11211)])
 
 
 @app.before_request
 def return_cached():
-    # if GET and POST not empty
     if not request.values:
         response = mc.get(request.path)
         if response: 
@@ -49,11 +53,7 @@ def proxy(url):
 	
     req = get_source_rsp(url)
     LOG.info("Got %s response from %s",req.status_code, url)
-    headers = dict(req.headers)
-    # def generate():
-    #     for chunk in req.iter_content(CHUNK_SIZE):
-    #         yield chunk
-    # return Response(generate(), headers = headers)
+    headers = dict(req.headers)    
     return Response(stream_with_context(req.iter_content()), content_type = req.headers['content-type'])
 
 
@@ -110,4 +110,6 @@ def proxy_ref_info(request):
 
 if __name__ == "__main__":
    app.debug = True
-   app.run()    
+   app.run()  
+
+
