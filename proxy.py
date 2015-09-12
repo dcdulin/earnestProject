@@ -1,6 +1,8 @@
 """
 A simple proxy server. Usage:
 
+must first start memcached instance:  memcached -d -m 30 -l 127.0.0.1 -p 11211
+
 http://hostname:port/p/(URL to be proxied, minus protocol)
 
 For example:
@@ -8,44 +10,58 @@ For example:
 http://127.0.0.1:5000/p/www.google.com
 
 """
+
+##############################################################################
+#TODO NEXT: not rendering when referred by proxy (such as images) when cached
+##############################################################################
+
+
+
+#The request and response objects wrap the WSGI environment
 from flask import Flask, render_template, request, abort, Response, redirect, stream_with_context
 import requests
 import logging
+import memcache
+# from werkzeug.contrib.cache import SimpleCache
 
 app = Flask(__name__.split('.')[0])
 logging.basicConfig(level=logging.INFO)
 APPROVED_HOSTS = set(["google.com", "www.google.com", "yahoo.com"])
 CHUNK_SIZE = 1024
 LOG = logging.getLogger("main.py")
+mc = memcache.Client(['127.0.0.1:11211'], debug=1)
+CACHE_TIMEOUT = 5
+# cache = SimpleCache()
 
 
-@app.route('/<path:url>')
-def root(url):
-    LOG.info("Root route, path: %s", url)
-    # If referred from a proxy request, then redirect to a URL with the proxy prefix.
-    # This allows server-relative and protocol-relative URLs to work.
-    proxy_ref = proxy_ref_info(request)
-    if proxy_ref:
-        redirect_url = "/p/%s/%s%s" % (proxy_ref[0], url, ("?" + request.query_string if request.query_string else ""))
-        LOG.info("Redirecting referred URL to: %s", redirect_url)
-        return redirect(redirect_url)
-    # Otherwise, default behavior
-    return render_template('hello.html', name=url,request=request)
+@app.before_request
+def return_cached():
+    # if GET and POST not empty
+    if not request.values:
+        response = mc.get(request.path)
+        if response: 
+            LOG.info("returning cache with key: %s", request.path)
+            return response
+
+@app.after_request
+def cache_response(response):
+    if not request.values:
+        LOG.info("setting cache. key: %s, value: %s", request.path, response)
+        mc.set(request.path, response.data, CACHE_TIMEOUT)        
+    return response
 
 
 @app.route('/p/<path:url>')
+# @cached()
 def proxy(url):
     """Fetches the specified URL and streams it out to the client.
 
     If the request was referred by the proxy itself (e.g. this is an image fetch for
     a previously proxied HTML page), then the original Referer is passed."""
+	
     req = get_source_rsp(url)
     LOG.info("Got %s response from %s",req.status_code, url)
-    headers = dict(req.headers)
-    # def generate():
-    #     for chunk in req.iter_content(CHUNK_SIZE):
-    #         yield chunk
-    # return Response(generate(), headers = headers)
+    headers = dict(req.headers)    
     return Response(stream_with_context(req.iter_content()), content_type = req.headers['content-type'])
 
 
